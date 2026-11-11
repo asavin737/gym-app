@@ -1,8 +1,14 @@
+using System.Text.Json.Serialization;
+
 namespace WebApi.Waitlist;
 
 public class JoinWaitlistRequest
 {
-    public required long ClassId { get; set; }
+    [JsonRequired]
+    [JsonNumberHandling(JsonNumberHandling.Strict)]
+    public long ClassId { get; set; }
 
-    public required int Seats { get; set; }
+    [JsonRequired]
+    [JsonNumberHandling(JsonNumberHandling.Strict)]
+    public int Seats { get; set; }
 }

@@ -379,6 +379,8 @@ public class Phase3Tests
                 ("missing-class", """{"seats":1}"""),
                 ("missing-seats", $$"""{"classId":{{world.ClassId}}}"""),
                 ("text-id", """{"classId":"abc","seats":1}"""),
+                ("string-id", $$"""{"classId":"{{world.ClassId}}","seats":1}"""),
+                ("string-seats", $$"""{"classId":{{world.ClassId}},"seats":"1"}"""),
                 ("fraction", $$"""{"classId":{{world.ClassId}},"seats":1.5}"""),
                 ("broken", "{"),
                 ("empty", "")

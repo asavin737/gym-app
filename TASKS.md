@@ -78,4 +78,4 @@
 ## Фаза 11. Сдача
 
 - [x] 42. `dotnet test` проходит при запущенных Postgres и Redis. Логин по-прежнему выдаёт токен.
-- [ ] 43. Короткая заметка сдачи: принятые `// решение:` и что осталось за рамками. [TASKS.md](TASKS.md), [ARCHITECTURE.md](ARCHITECTURE.md) и [OUT_OF_SCOPE.md](OUT_OF_SCOPE.md) её не заменяют.
+- [x] 43. Короткая заметка сдачи: принятые `// решение:` и что осталось за рамками. [TASKS.md](TASKS.md), [ARCHITECTURE.md](ARCHITECTURE.md) и [OUT_OF_SCOPE.md](OUT_OF_SCOPE.md) её не заменяют. [РЕШЕНИЕ.md](РЕШЕНИЕ.md).

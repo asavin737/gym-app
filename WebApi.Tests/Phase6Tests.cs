@@ -132,6 +132,42 @@ public class Phase6Tests
     }
 
     [TestMethod]
+    public async Task MissingFieldsAndStringNumbersAreBadRequest()
+    {
+        var world = await Scenario.CreateWorldAsync(_factory, capacity: 1);
+        try
+        {
+            var token = await Scenario.TokenAsync(_factory, world.UserId);
+            var bodies = new (string? Key, string Json)[]
+            {
+                ("missing-class", """{"seats":1}"""),
+                ("missing-seats", $$"""{"classId":{{world.ClassId}}}"""),
+                ("string-id", $$"""{"classId":"{{world.ClassId}}","seats":1}"""),
+                ("string-seats", $$"""{"classId":{{world.ClassId}},"seats":"2"}""")
+            };
+
+            foreach (var (key, json) in bodies)
+            {
+                var response = await Scenario.SendAsync(
+                    _client,
+                    HttpMethod.Post,
+                    "/enrollments/waitlist",
+                    token,
+                    json,
+                    key);
+                Assert.AreEqual(HttpStatusCode.BadRequest, response.StatusCode, json);
+            }
+
+            Assert.AreEqual(0, await CountWaitingAsync(world.UserId));
+            Assert.AreEqual(world.RemainingVisits, await Scenario.RemainingVisitsAsync(_factory, world.UserId));
+        }
+        finally
+        {
+            await DeleteAsync(world);
+        }
+    }
+
+    [TestMethod]
     public async Task BlankKeyAndNonPositiveSeatsAreBadRequest()
     {
         var world = await Scenario.CreateWorldAsync(_factory);

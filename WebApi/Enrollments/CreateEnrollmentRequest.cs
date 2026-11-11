@@ -1,8 +1,14 @@
+using System.Text.Json.Serialization;
+
 namespace WebApi.Enrollments;
 
 public class CreateEnrollmentRequest
 {
-    public required long ClassId { get; set; }
+    [JsonRequired]
+    [JsonNumberHandling(JsonNumberHandling.Strict)]
+    public long ClassId { get; set; }
 
-    public required int Seats { get; set; }
+    [JsonRequired]
+    [JsonNumberHandling(JsonNumberHandling.Strict)]
+    public int Seats { get; set; }
 }

@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using Common.Caching;
 using DataAccessLayer.Entities;
 using DataAccessLayer.UnitOfWork;
 using Microsoft.AspNetCore.Mvc;
@@ -19,11 +20,13 @@ public class EnrollmentService
     private const string ActiveStatus = "active";
 
     private readonly IUnitOfWork _unitOfWork;
+    private readonly ICacheService _cache;
     private readonly JsonSerializerOptions _json;
 
-    public EnrollmentService(IUnitOfWork unitOfWork, IOptions<JsonOptions> jsonOptions)
+    public EnrollmentService(IUnitOfWork unitOfWork, ICacheService cache, IOptions<JsonOptions> jsonOptions)
     {
         _unitOfWork = unitOfWork;
+        _cache = cache;
         _json = jsonOptions.Value.JsonSerializerOptions;
     }
 
@@ -54,10 +57,17 @@ public class EnrollmentService
 
         try
         {
-            return await UnitOfWorkTransaction.ExecuteAsync(
+            var outcome = await UnitOfWorkTransaction.ExecuteAsync(
                 _unitOfWork,
                 token => BookAsync(userId, idempotencyKey, keyHash, requestHash, request, token),
                 cancellationToken);
+
+            if (outcome.Created)
+            {
+                await InvalidateUserCardsAsync(userId, cancellationToken);
+            }
+
+            return outcome.Result;
         }
         catch (DbUpdateException exception) when (IsUniqueViolation(exception))
         {
@@ -78,7 +88,61 @@ public class EnrollmentService
         }
     }
 
-    private async Task<TransactionOutcome<EnrollmentCreateResult>> BookAsync(
+    public async Task<EnrollmentCardResponse?> GetAsync(
+        long userId,
+        long enrollmentId,
+        CancellationToken cancellationToken = default)
+    {
+        var cached = await _cache.GetAsync<CachedCard>(CacheKey(enrollmentId), cancellationToken);
+
+        if (cached is not null)
+        {
+            return cached.UserId == userId ? cached.Card : null;
+        }
+
+        var enrollment = await _unitOfWork.Enrollment.GetByIdIgnoringFiltersAsync(enrollmentId, cancellationToken);
+
+        if (enrollment is null || enrollment.UserId != userId)
+        {
+            return null;
+        }
+
+        var pass = (await _unitOfWork.Pass.GetByUserAsync(userId, cancellationToken))!;
+        var card = new EnrollmentCardResponse
+        {
+            Id = enrollment.Id,
+            Status = enrollment.Status,
+            Seats = enrollment.Seats,
+            CreatedAt = enrollment.CreatedAt,
+            Class = new EnrollmentCardClass
+            {
+                Id = enrollment.Class.Id,
+                Title = enrollment.Class.Title,
+                StartsAt = enrollment.Class.StartsAt,
+                DurationMinutes = enrollment.Class.DurationMinutes,
+                IsCancelled = enrollment.Class.IsCancelled,
+                Room = new EnrollmentCardRoom
+                {
+                    Id = enrollment.Class.Room.Id,
+                    Name = enrollment.Class.Room.Name
+                }
+            },
+            Pass = new EnrollmentCardPass
+            {
+                RemainingVisits = pass.RemainingVisits,
+                ValidUntil = pass.ValidUntil
+            }
+        };
+
+        await _cache.SetAsync(
+            CacheKey(enrollmentId),
+            new CachedCard { UserId = userId, Card = card },
+            ct: cancellationToken);
+
+        return card;
+    }
+
+    private async Task<TransactionOutcome<BookingOutcome>> BookAsync(
         long userId,
         string idempotencyKey,
         string keyHash,
@@ -172,8 +236,22 @@ public class EnrollmentService
             CreatedAt = createdAt
         }, cancellationToken);
 
-        return new TransactionOutcome<EnrollmentCreateResult>(true, EnrollmentCreateResult.Created(body));
+        return new TransactionOutcome<BookingOutcome>(true, new BookingOutcome(EnrollmentCreateResult.Created(body), true));
     }
+
+    private async Task InvalidateUserCardsAsync(long userId, CancellationToken cancellationToken)
+    {
+        var ids = await _unitOfWork.Enrollment.ListIdsByUserIgnoringFiltersAsync(userId, cancellationToken);
+
+        foreach (var id in ids)
+        {
+            await _cache.RemoveAsync(CacheKey(id), cancellationToken);
+        }
+    }
+
+    // решение: ключ карточки — enrollment-card:{id}. В значении лежит и владелец,
+    // иначе чужой запрос по тому же id отдал бы карточку из кэша.
+    private static string CacheKey(long enrollmentId) => $"enrollment-card:{enrollmentId}";
 
     private static EnrollmentCreateResult FromExisting(IdempotencyRecord record, string requestHash)
     {
@@ -187,9 +265,9 @@ public class EnrollmentService
         return EnrollmentCreateResult.Conflict("idempotency-mismatch");
     }
 
-    private static TransactionOutcome<EnrollmentCreateResult> Rollback(EnrollmentCreateResult result)
+    private static TransactionOutcome<BookingOutcome> Rollback(EnrollmentCreateResult result)
     {
-        return new TransactionOutcome<EnrollmentCreateResult>(false, result);
+        return new TransactionOutcome<BookingOutcome>(false, new BookingOutcome(result, false));
     }
 
     private static bool IsUniqueViolation(DbUpdateException exception)
@@ -208,5 +286,14 @@ public class EnrollmentService
     private static string Sha256(string value)
     {
         return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value))).ToLowerInvariant();
+    }
+
+    private readonly record struct BookingOutcome(EnrollmentCreateResult Result, bool Created);
+
+    private sealed class CachedCard
+    {
+        public long UserId { get; set; }
+
+        public EnrollmentCardResponse Card { get; set; } = null!;
     }
 }

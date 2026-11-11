@@ -23,7 +23,17 @@ public class EnrollmentRepository : GenericRepository<Enrollment>, IEnrollmentRe
         return await _dbSet
             .IgnoreQueryFilters()
             .Include(x => x.Class)
+            .ThenInclude(x => x.Room)
             .FirstOrDefaultAsync(x => x.Id == id, ct);
+    }
+
+    public async Task<List<long>> ListIdsByUserIgnoringFiltersAsync(long userId, CancellationToken ct = default)
+    {
+        return await _dbSet
+            .IgnoreQueryFilters()
+            .Where(x => x.UserId == userId)
+            .Select(x => x.Id)
+            .ToListAsync(ct);
     }
 
     public async Task<int> SumActiveSeatsAsync(long classId, CancellationToken ct = default)

@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using WebApi.Enrollments;
+using WebApi.Routing;
 
 namespace WebApi.Controllers;
 
@@ -44,5 +45,23 @@ public class EnrollmentsController : BaseApiController
             StatusCodes.Status409Conflict => ConflictProblem(result.Reason!),
             _ => BadRequestProblem()
         };
+    }
+
+    [HttpGet("{id}")]
+    public async Task<IActionResult> Get(string id, CancellationToken cancellationToken)
+    {
+        if (!RouteId.TryParse(id, out var enrollmentId))
+        {
+            return BadRequestProblem();
+        }
+
+        var card = await _enrollmentService.GetAsync(CurrentUserId, enrollmentId, cancellationToken);
+
+        if (card is null)
+        {
+            return NotFoundProblem();
+        }
+
+        return Ok(card);
     }
 }

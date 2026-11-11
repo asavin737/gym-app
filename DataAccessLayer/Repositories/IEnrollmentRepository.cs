@@ -9,5 +9,7 @@ public interface IEnrollmentRepository : IGenericRepository<Enrollment>
 
     Task<Enrollment?> GetByIdIgnoringFiltersAsync(long id, CancellationToken ct = default);
 
+    Task<List<long>> ListIdsByUserIgnoringFiltersAsync(long userId, CancellationToken ct = default);
+
     Task<int> SumActiveSeatsAsync(long classId, CancellationToken ct = default);
 }

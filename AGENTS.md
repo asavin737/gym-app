@@ -8,6 +8,7 @@
 - [.cursor/rules/PROJECT.md](.cursor/rules/PROJECT.md) — как устроен существующий код
 - [ARCHITECTURE.md](ARCHITECTURE.md) — как класть новое
 - [OUT_OF_SCOPE.md](OUT_OF_SCOPE.md) — что не делать
+- [TASKS.md](TASKS.md) — порядок работ
 
 ## Границы
 

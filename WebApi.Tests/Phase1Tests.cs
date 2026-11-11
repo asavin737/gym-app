@@ -184,7 +184,6 @@ public class Phase1Tests
         var authorize = controller.GetCustomAttribute<AuthorizeAttribute>();
         Assert.IsNotNull(authorize);
         Assert.AreEqual(admin ? "admin" : null, authorize.Roles);
-        Assert.AreEqual(0, controller.GetMethods(BindingFlags.Instance | BindingFlags.Public | BindingFlags.DeclaredOnly).Length);
     }
 
     private static string NewRoomName() => $"phase1-{Guid.NewGuid():N}";

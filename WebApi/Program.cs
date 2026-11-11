@@ -9,9 +9,12 @@ using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using StackExchange.Redis;
+using WebApi.Analytics;
 using WebApi.Auth;
 using WebApi.Enrollments;
 using WebApi.Middleware;
+using WebApi.Schedule;
+using WebApi.Waitlist;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -32,6 +35,9 @@ builder.Services.AddDbContext<ClubDbContext>(options =>
 
 builder.Services.AddScoped<IUnitOfWork, UnitOfWork>();
 builder.Services.AddScoped<EnrollmentService>();
+builder.Services.AddScoped<WaitlistService>();
+builder.Services.AddScoped<ScheduleService>();
+builder.Services.AddScoped<LoadService>();
 
 builder.Services.AddSingleton<IConnectionMultiplexer>(_ =>
     ConnectionMultiplexer.Connect(builder.Configuration.GetConnectionString("Redis")!));

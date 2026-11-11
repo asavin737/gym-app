@@ -108,31 +108,7 @@ public class EnrollmentService
         }
 
         var pass = (await _unitOfWork.Pass.GetByUserAsync(userId, cancellationToken))!;
-        var card = new EnrollmentCardResponse
-        {
-            Id = enrollment.Id,
-            Status = enrollment.Status,
-            Seats = enrollment.Seats,
-            CreatedAt = enrollment.CreatedAt,
-            Class = new EnrollmentCardClass
-            {
-                Id = enrollment.Class.Id,
-                Title = enrollment.Class.Title,
-                StartsAt = enrollment.Class.StartsAt,
-                DurationMinutes = enrollment.Class.DurationMinutes,
-                IsCancelled = enrollment.Class.IsCancelled,
-                Room = new EnrollmentCardRoom
-                {
-                    Id = enrollment.Class.Room.Id,
-                    Name = enrollment.Class.Room.Name
-                }
-            },
-            Pass = new EnrollmentCardPass
-            {
-                RemainingVisits = pass.RemainingVisits,
-                ValidUntil = pass.ValidUntil
-            }
-        };
+        var card = MapCard(enrollment, pass);
 
         await _cache.SetAsync(
             CacheKey(enrollmentId),
@@ -140,6 +116,62 @@ public class EnrollmentService
             ct: cancellationToken);
 
         return card;
+    }
+
+    public async Task<SeatChangeResult> ChangeSeatsAsync(
+        long userId,
+        long enrollmentId,
+        ChangeSeatsRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        if (request.Seats < 1)
+        {
+            return SeatChangeResult.BadRequest();
+        }
+
+        var enrollment = await _unitOfWork.Enrollment.GetByIdIgnoringFiltersAsync(enrollmentId, cancellationToken);
+
+        if (enrollment is null || enrollment.UserId != userId)
+        {
+            return SeatChangeResult.NotFound();
+        }
+
+        var outcome = await UnitOfWorkTransaction.ExecuteAsync(
+            _unitOfWork,
+            token => ChangeSeatsAsync(userId, enrollment, request.Seats, token),
+            cancellationToken);
+
+        if (outcome.Result.Changed)
+        {
+            await InvalidateUserCardsAsync(userId, cancellationToken);
+        }
+
+        return outcome.Result;
+    }
+
+    public async Task<CancelEnrollmentResult> CancelAsync(
+        long userId,
+        long enrollmentId,
+        CancellationToken cancellationToken = default)
+    {
+        var enrollment = await _unitOfWork.Enrollment.GetByIdIgnoringFiltersAsync(enrollmentId, cancellationToken);
+
+        if (enrollment is null || enrollment.UserId != userId)
+        {
+            return CancelEnrollmentResult.NotFound();
+        }
+
+        var outcome = await UnitOfWorkTransaction.ExecuteAsync(
+            _unitOfWork,
+            token => CancelAsync(userId, enrollment, token),
+            cancellationToken);
+
+        foreach (var affectedUserId in outcome.AffectedUserIds)
+        {
+            await InvalidateUserCardsAsync(affectedUserId, cancellationToken);
+        }
+
+        return outcome.Result;
     }
 
     private async Task<TransactionOutcome<BookingOutcome>> BookAsync(
@@ -288,7 +320,216 @@ public class EnrollmentService
         return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value))).ToLowerInvariant();
     }
 
+    private async Task<TransactionOutcome<SeatOutcome>> ChangeSeatsAsync(
+        long userId,
+        Enrollment enrollment,
+        int seats,
+        CancellationToken cancellationToken)
+    {
+        var scheduled = await _unitOfWork.Class.LockByIdAsync(enrollment.ClassId, cancellationToken);
+        await ReloadAsync(enrollment, cancellationToken);
+
+        // решение: несколько причин проверяются в порядке enrollment-cancelled, class-cancelled,
+        // class-started, затем при увеличении pass-expired, capacity-exceeded, pass-exhausted.
+        if (enrollment.Status != ActiveStatus)
+        {
+            return Rollback(SeatChangeResult.Conflict("enrollment-cancelled"));
+        }
+
+        var now = DateTime.UtcNow;
+
+        if (scheduled!.IsCancelled)
+        {
+            return Rollback(SeatChangeResult.Conflict("class-cancelled"));
+        }
+
+        if (scheduled.StartsAt <= now)
+        {
+            return Rollback(SeatChangeResult.Conflict("class-started"));
+        }
+
+        if (seats == enrollment.Seats)
+        {
+            var unchangedPass = (await _unitOfWork.Pass.GetByUserAsync(userId, cancellationToken))!;
+            return new TransactionOutcome<SeatOutcome>(false, new SeatOutcome(SeatChangeResult.Ok(MapCard(enrollment, unchangedPass), false)));
+        }
+
+        var pass = (await _unitOfWork.Pass.LockByUserIdAsync(userId, cancellationToken))!;
+        var delta = seats - enrollment.Seats;
+
+        if (delta > 0)
+        {
+            if (pass.ValidUntil < DateOnly.FromDateTime(now))
+            {
+                return Rollback(SeatChangeResult.Conflict("pass-expired"));
+            }
+
+            var taken = await _unitOfWork.Enrollment.SumActiveSeatsAsync(scheduled.Id, cancellationToken);
+
+            if (taken + delta > scheduled.Capacity)
+            {
+                return Rollback(SeatChangeResult.Conflict("capacity-exceeded"));
+            }
+
+            if (pass.RemainingVisits < delta)
+            {
+                return Rollback(SeatChangeResult.Conflict("pass-exhausted"));
+            }
+        }
+
+        enrollment.Seats = seats;
+        pass.RemainingVisits -= delta;
+        return new TransactionOutcome<SeatOutcome>(true, new SeatOutcome(SeatChangeResult.Ok(MapCard(enrollment, pass), true)));
+    }
+
+    private async Task<TransactionOutcome<CancelOutcome>> CancelAsync(
+        long userId,
+        Enrollment enrollment,
+        CancellationToken cancellationToken)
+    {
+        var scheduled = await _unitOfWork.Class.LockByIdAsync(enrollment.ClassId, cancellationToken);
+        await ReloadAsync(enrollment, cancellationToken);
+        var now = DateTime.UtcNow;
+
+        if (enrollment.Status == ActiveStatus && !scheduled!.IsCancelled && scheduled.StartsAt <= now)
+        {
+            return new TransactionOutcome<CancelOutcome>(false, new CancelOutcome(CancelEnrollmentResult.Conflict("class-started"), []));
+        }
+
+        if (enrollment.Status != ActiveStatus)
+        {
+            // решение: refunded_visits хранит первый возврат, повтор не пересчитывает его по текущему времени.
+            var stored = new CancelEnrollmentResponse
+            {
+                Id = enrollment.Id,
+                Status = "cancelled",
+                RefundedVisits = enrollment.RefundedVisits ?? 0
+            };
+            return new TransactionOutcome<CancelOutcome>(false, new CancelOutcome(CancelEnrollmentResult.Ok(stored), []));
+        }
+
+        var refunded = scheduled!.IsCancelled || scheduled.StartsAt - now >= TimeSpan.FromHours(2)
+            ? enrollment.Seats
+            : 0;
+        var pass = (await _unitOfWork.Pass.LockByUserIdAsync(userId, cancellationToken))!;
+        enrollment.Status = "cancelled";
+        enrollment.CancelledAt = UtcTime.Truncate(now);
+        enrollment.RefundedVisits = refunded;
+        pass.RemainingVisits += refunded;
+
+        var affected = new List<long> { userId };
+
+        // решение: если мест меньше запроса, очередь останавливается; просроченный абонемент пропускается.
+        // На отменённое клубом занятие новые брони из очереди не создаются.
+        if (!scheduled.IsCancelled)
+        {
+            var taken = await _unitOfWork.Enrollment.SumActiveSeatsAsync(scheduled.Id, cancellationToken);
+            var free = scheduled.Capacity - taken + enrollment.Seats;
+            var waiting = await _unitOfWork.Waitlist.LockWaitingAsync(scheduled.Id, cancellationToken);
+            waiting.Sort(static (left, right) =>
+            {
+                var byTime = left.CreatedAt.CompareTo(right.CreatedAt);
+                return byTime != 0 ? byTime : left.Id.CompareTo(right.Id);
+            });
+            var promoted = new List<(WaitlistEntry Entry, Enrollment Booking)>();
+
+            foreach (var entry in waiting)
+            {
+                if (entry.Seats > free)
+                {
+                    break;
+                }
+
+                var waiterPass = (await _unitOfWork.Pass.LockByUserIdAsync(entry.UserId, cancellationToken))!;
+
+                if (waiterPass.ValidUntil < DateOnly.FromDateTime(now) || waiterPass.RemainingVisits < entry.Seats)
+                {
+                    continue;
+                }
+
+                var booking = await _unitOfWork.Enrollment.CreateAsync(new Enrollment
+                {
+                    UserId = entry.UserId,
+                    ClassId = scheduled.Id,
+                    Seats = entry.Seats,
+                    Status = ActiveStatus,
+                    CreatedAt = UtcTime.Truncate(now)
+                }, cancellationToken);
+                waiterPass.RemainingVisits -= entry.Seats;
+                entry.Status = "enrolled";
+                free -= entry.Seats;
+                affected.Add(entry.UserId);
+                promoted.Add((entry, booking));
+            }
+
+            await _unitOfWork.SaveChangesAsync(cancellationToken);
+
+            foreach (var (entry, booking) in promoted)
+            {
+                entry.EnrollmentId = booking.Id;
+            }
+        }
+
+        if (scheduled.IsCancelled)
+        {
+            await _unitOfWork.SaveChangesAsync(cancellationToken);
+        }
+
+        return new TransactionOutcome<CancelOutcome>(
+            true,
+            new CancelOutcome(CancelEnrollmentResult.Ok(new CancelEnrollmentResponse
+            {
+                Id = enrollment.Id,
+                Status = "cancelled",
+                RefundedVisits = refunded
+            }), affected));
+    }
+
+    private async Task ReloadAsync(Enrollment enrollment, CancellationToken cancellationToken)
+    {
+        await _unitOfWork.DbContext.Entry(enrollment).ReloadAsync(cancellationToken);
+        await _unitOfWork.DbContext.Entry(enrollment.Class).ReloadAsync(cancellationToken);
+    }
+
+    private static EnrollmentCardResponse MapCard(Enrollment enrollment, Pass pass)
+    {
+        return new EnrollmentCardResponse
+        {
+            Id = enrollment.Id,
+            Status = enrollment.Status,
+            Seats = enrollment.Seats,
+            CreatedAt = enrollment.CreatedAt,
+            Class = new EnrollmentCardClass
+            {
+                Id = enrollment.Class.Id,
+                Title = enrollment.Class.Title,
+                StartsAt = enrollment.Class.StartsAt,
+                DurationMinutes = enrollment.Class.DurationMinutes,
+                IsCancelled = enrollment.Class.IsCancelled,
+                Room = new EnrollmentCardRoom
+                {
+                    Id = enrollment.Class.Room.Id,
+                    Name = enrollment.Class.Room.Name
+                }
+            },
+            Pass = new EnrollmentCardPass
+            {
+                RemainingVisits = pass.RemainingVisits,
+                ValidUntil = pass.ValidUntil
+            }
+        };
+    }
+
+    private static TransactionOutcome<SeatOutcome> Rollback(SeatChangeResult result)
+    {
+        return new TransactionOutcome<SeatOutcome>(false, new SeatOutcome(result));
+    }
+
     private readonly record struct BookingOutcome(EnrollmentCreateResult Result, bool Created);
+
+    private readonly record struct SeatOutcome(SeatChangeResult Result);
+
+    private readonly record struct CancelOutcome(CancelEnrollmentResult Result, IReadOnlyList<long> AffectedUserIds);
 
     private sealed class CachedCard
     {

@@ -169,7 +169,8 @@ public static class DatabaseSeeder
                 CreatedAt = createdAt,
                 CancelledAt = cancelled
                     ? CancelledBetween(createdAt, scheduledClass.StartsAt, random)
-                    : null
+                    : null,
+                RefundedVisits = cancelled ? 0 : null
             });
         }
 

@@ -17,4 +17,20 @@ public class ClassRepository : GenericRepository<Class>, IClassRepository
             .Include(x => x.Enrollments)
             .FirstOrDefaultAsync(x => x.Id == id, ct);
     }
+
+    public async Task<Class?> GetByIdIgnoringFiltersAsync(long id, CancellationToken ct = default)
+    {
+        return await _dbSet
+            .IgnoreQueryFilters()
+            .FirstOrDefaultAsync(x => x.Id == id, ct);
+    }
+
+    public async Task<Class?> LockByIdAsync(long id, CancellationToken ct = default)
+    {
+        return await _dbSet
+            .FromSqlInterpolated($"SELECT * FROM classes WHERE id = {id} FOR UPDATE")
+            .IgnoreQueryFilters()
+            .AsTracking()
+            .FirstOrDefaultAsync(ct);
+    }
 }

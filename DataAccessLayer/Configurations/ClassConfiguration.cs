@@ -25,6 +25,8 @@ public class ClassConfiguration : IEntityTypeConfiguration<Class>
             .WithMany()
             .HasForeignKey(x => x.RoomId);
 
+        builder.HasIndex(x => x.StartsAt);
+
         builder.HasQueryFilter(x => !x.IsCancelled);
     }
 }

@@ -15,4 +15,12 @@ public class PassRepository : GenericRepository<Pass>, IPassRepository
     {
         return await _dbSet.FirstOrDefaultAsync(x => x.UserId == userId, ct);
     }
+
+    public async Task<Pass?> LockByUserIdAsync(long userId, CancellationToken ct = default)
+    {
+        return await _dbSet
+            .FromSqlInterpolated($"SELECT * FROM passes WHERE user_id = {userId} FOR UPDATE")
+            .AsTracking()
+            .FirstOrDefaultAsync(ct);
+    }
 }

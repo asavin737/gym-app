@@ -29,5 +29,8 @@ public class EnrollmentConfiguration : IEntityTypeConfiguration<Enrollment>
             .HasOne(x => x.Class)
             .WithMany(x => x.Enrollments)
             .HasForeignKey(x => x.ClassId);
+
+        builder.HasIndex(x => x.ClassId);
+        builder.HasIndex(x => new { x.ClassId, x.Status });
     }
 }

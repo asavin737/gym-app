@@ -60,6 +60,8 @@ namespace DataAccessLayer.Migrations
 
                     b.HasIndex("RoomId");
 
+                    b.HasIndex("StartsAt");
+
                     b.ToTable("classes", (string)null);
                 });
 
@@ -103,7 +105,65 @@ namespace DataAccessLayer.Migrations
 
                     b.HasIndex("UserId");
 
+                    b.HasIndex("ClassId", "Status");
+
                     b.ToTable("enrollments", (string)null);
+                });
+
+            modelBuilder.Entity("DataAccessLayer.Entities.IdempotencyRecord", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint")
+                        .HasColumnName("id");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Id"));
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<string>("Key")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("key");
+
+                    b.Property<string>("KeyHash")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("key_hash");
+
+                    b.Property<string>("RequestHash")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("request_hash");
+
+                    b.Property<string>("ResponseBody")
+                        .IsRequired()
+                        .HasColumnType("jsonb")
+                        .HasColumnName("response_body");
+
+                    b.Property<string>("Scope")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("scope");
+
+                    b.Property<int>("StatusCode")
+                        .HasColumnType("integer")
+                        .HasColumnName("status_code");
+
+                    b.Property<long>("UserId")
+                        .HasColumnType("bigint")
+                        .HasColumnName("user_id");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("UserId", "Scope", "KeyHash")
+                        .IsUnique();
+
+                    b.ToTable("idempotency_records", (string)null);
                 });
 
             modelBuilder.Entity("DataAccessLayer.Entities.Pass", b =>
@@ -186,6 +246,53 @@ namespace DataAccessLayer.Migrations
                     b.ToTable("users", (string)null);
                 });
 
+            modelBuilder.Entity("DataAccessLayer.Entities.WaitlistEntry", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint")
+                        .HasColumnName("id");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Id"));
+
+                    b.Property<long>("ClassId")
+                        .HasColumnType("bigint")
+                        .HasColumnName("class_id");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<long?>("EnrollmentId")
+                        .HasColumnType("bigint")
+                        .HasColumnName("enrollment_id");
+
+                    b.Property<int>("Seats")
+                        .HasColumnType("integer")
+                        .HasColumnName("seats");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("status");
+
+                    b.Property<long>("UserId")
+                        .HasColumnType("bigint")
+                        .HasColumnName("user_id");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("EnrollmentId");
+
+                    b.HasIndex("UserId", "ClassId")
+                        .IsUnique()
+                        .HasFilter("status = 'waiting'");
+
+                    b.HasIndex("ClassId", "Status", "CreatedAt", "Id");
+
+                    b.ToTable("waitlist_entries", (string)null);
+                });
+
             modelBuilder.Entity("DataAccessLayer.Entities.Class", b =>
                 {
                     b.HasOne("DataAccessLayer.Entities.Room", "Room")
@@ -214,6 +321,15 @@ namespace DataAccessLayer.Migrations
                     b.Navigation("Class");
                 });
 
+            modelBuilder.Entity("DataAccessLayer.Entities.IdempotencyRecord", b =>
+                {
+                    b.HasOne("DataAccessLayer.Entities.User", null)
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
             modelBuilder.Entity("DataAccessLayer.Entities.Pass", b =>
                 {
                     b.HasOne("DataAccessLayer.Entities.User", null)
@@ -221,6 +337,28 @@ namespace DataAccessLayer.Migrations
                         .HasForeignKey("UserId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
+                });
+
+            modelBuilder.Entity("DataAccessLayer.Entities.WaitlistEntry", b =>
+                {
+                    b.HasOne("DataAccessLayer.Entities.Class", "Class")
+                        .WithMany()
+                        .HasForeignKey("ClassId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("DataAccessLayer.Entities.Enrollment", null)
+                        .WithMany()
+                        .HasForeignKey("EnrollmentId")
+                        .OnDelete(DeleteBehavior.Cascade);
+
+                    b.HasOne("DataAccessLayer.Entities.User", null)
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Class");
                 });
 
             modelBuilder.Entity("DataAccessLayer.Entities.Class", b =>

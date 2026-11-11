@@ -253,6 +253,46 @@ public static class DatabaseSeeder
 
         await dbContext.Enrollments.AddRangeAsync(enrollments, ct);
         await dbContext.SaveChangesAsync(ct);
+
+        Class? fullClass = null;
+
+        for (var i = 0; i < filledClasses.Count; i++)
+        {
+            if (freeSeatsTargets[i] != 0)
+            {
+                continue;
+            }
+
+            takenSeats.TryGetValue(filledClasses[i].Id, out var taken);
+
+            if (filledClasses[i].Capacity - taken == 0)
+            {
+                fullClass = filledClasses[i];
+                break;
+            }
+        }
+
+        if (fullClass == null)
+        {
+            return;
+        }
+
+        var waitlist = new List<WaitlistEntry>();
+
+        for (var i = 0; i < 3; i++)
+        {
+            waitlist.Add(new WaitlistEntry
+            {
+                UserId = users[i].Id,
+                ClassId = fullClass.Id,
+                Seats = 1,
+                Status = "waiting",
+                CreatedAt = now.AddMinutes(-30 + i)
+            });
+        }
+
+        await dbContext.WaitlistEntries.AddRangeAsync(waitlist, ct);
+        await dbContext.SaveChangesAsync(ct);
     }
 
     private static DateTime CreatedBefore(DateTime startsAt, DateTime now, Random random)
